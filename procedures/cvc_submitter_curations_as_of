@@ -1,0 +1,106 @@
+CREATE OR REPLACE TABLE FUNCTION `clingen-stage.clinvar_curator.cvc_submitter_curations_as_of`(as_of_date DATE) 
+AS ( 
+ WITH
+    x AS (
+    SELECT
+      cur.release_date,
+      as_of_date,
+      cur.submitter_id,
+      COUNTIF(
+        (cur.most_recent_curation AND NOT cur.retired AND NOT cur.scv_deleted) AND
+        (
+          cur.action="non-contributory" OR 
+          (
+            cur.action="follow up" AND 
+            cur.reason="Send for submitter review"
+          ) 
+        )
+      ) AS feedback_count,
+      COUNTIF(
+        (cur.most_recent_curation AND NOT cur.retired AND NOT cur.scv_deleted) AND
+        (
+          cur.action="non-contributory" OR 
+          (
+            cur.action="follow up" AND 
+            cur.reason="Send for submitter review"
+          )
+        ) AND 
+        cur.outdated_curation
+      ) AS outdated_feedback_count,
+      COUNTIF(
+        (cur.most_recent_curation AND NOT cur.retired AND NOT cur.scv_deleted) AND
+        (
+          cur.action="follow up" AND 
+          NOT cur.reason="Send for submitter review"
+        )
+      ) AS followup_count,
+      COUNTIF(
+        (cur.most_recent_curation AND NOT cur.retired AND NOT cur.scv_deleted) AND
+        (
+          cur.action="follow up" AND 
+          NOT cur.reason="Send for submitter review" AND 
+          cur.outdated_curation
+        )
+      ) AS outdated_followup_count,
+      COUNTIF(
+        (cur.most_recent_curation AND NOT cur.retired AND NOT cur.scv_deleted) AND
+        cur.action="no change"
+      ) AS nochange_count,
+      COUNTIF(
+        (cur.most_recent_curation AND NOT cur.retired AND NOT cur.scv_deleted) AND
+        cur.action="no change" AND 
+        cur.outdated_curation
+      ) AS outdated_nochange_count
+    FROM `clingen-stage.clinvar_curator.cvc_curations_as_of`(as_of_date) cur
+    GROUP BY
+      cur.release_date,
+      as_of_date,
+      cur.submitter_id )
+  SELECT
+    s.id,
+    s.current_name,
+    s.current_abbrev,
+    s.cvc_abbrev,
+    COUNT(scv.id) AS submission_count,
+    COUNT(DISTINCT scv.variation_id) AS variation_count,
+    x.feedback_count,
+    x.outdated_feedback_count,
+    x.followup_count,
+    x.outdated_followup_count,
+    x.nochange_count,
+    x.outdated_nochange_count,
+    MAX(scv.submission_date) as most_recent_submission,
+    x.release_date,
+    as_of_date
+  FROM
+    x
+  JOIN
+    `clinvar_curator.clinvar_submitters` s
+  ON
+    s.id = x.submitter_id AND 
+    -- REMOVE deleted_release_date is null check on 7/13/2023 after discovering it was wrong
+    -- s.deleted_release_date IS NULL AND
+    x.release_date BETWEEN S.start_release_date AND S.end_release_date
+  JOIN
+    `clinvar_curator.clinvar_scvs` scv
+  ON
+    scv.submitter_id = s.id AND 
+    -- REMOVE deleted_release_date is null check on 7/13/2023 after discovering it was wrong
+    -- scv.deleted_release_date IS NULL AND 
+    x.release_date BETWEEN scv.start_release_date AND scv.end_release_date
+  GROUP BY
+    s.id,
+    s.current_name,
+    s.current_abbrev,
+    s.cvc_abbrev,
+    x.feedback_count,
+    x.outdated_feedback_count,
+    x.followup_count,
+    x.outdated_followup_count,
+    x.nochange_count,
+    x.outdated_nochange_count,
+    x.release_date,
+    as_of_date
+  );
+
+  -- SELECT * FROM `clingen-stage.clinvar_curator.cvc_submitter_curations_as_of`(DATE('2023-04-04'));

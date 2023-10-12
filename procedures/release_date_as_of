@@ -1,0 +1,10 @@
+CREATE OR REPLACE TABLE FUNCTION `clingen-stage.clinvar_curator.release_date_as_of`(as_of_date DATE)
+AS (
+  (SELECT max(release_date) as release_date
+    FROM `clingen-stage.clinvar_curator.clinvar_releases` 
+    WHERE release_date <= as_of_date
+  )
+);
+
+-- select * 
+-- FROM `clingen-stage.clinvar_curator.release_date_as_of`('2023-09-09');

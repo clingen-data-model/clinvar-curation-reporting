@@ -1,0 +1,5 @@
+CREATE OR REPLACE FUNCTION clinvar_curator.cvc_project_start_date() 
+RETURNS DATE AS
+  ("2021-01-02");
+
+-- select clinvar_curator.cvc_project_start_date();

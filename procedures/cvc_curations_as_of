@@ -1,0 +1,112 @@
+CREATE OR REPLACE TABLE FUNCTION `clingen-stage.clinvar_curator.cvc_curations_as_of`(as_of_date DATE)
+AS (
+  WITH cur AS 
+  (
+    SELECT
+      cur.vcv_id,
+      SPLIT(cur.scv_id,'.')[OFFSET(0)] AS scv_id,
+      CAST(SPLIT(cur.scv_id,'.')[OFFSET(1)] AS INT64) AS scv_ver,
+      CAST(cur.variation_id AS String) AS variation_id,
+      CAST(cur.submitter_id AS String) AS submitter_id,
+      LOWER(cur.action) AS action,
+      cur.curator_email AS curator,
+      cur.curation_date AS curated_on,
+      cur.reason,
+      cur.notes,
+      IFNULL(cur.retired,FALSE) as retired,
+      DATE(cur.curation_date) AS curated_date,
+      TIME(cur.curation_date) AS curated_time_utc,
+      cur.override_field,
+      cur.override_value, 
+      rel.release_date,
+      cur.retired_date
+    FROM `clingen-stage.clinvar_curator.clinvar_curations` cur,
+      `clingen-stage.clinvar_curator.release_date_as_of`(as_of_date) rel
+    WHERE 
+      DATE(cur.curation_date) <= as_of_date
+  )
+  SELECT
+    as_of_date,
+    cur.release_date,
+    cur.vcv_id,
+    cur.scv_id,
+    cur.scv_ver,
+    cur.variation_id,
+    cur.submitter_id,
+    cur.action,
+    cur.curator,
+    cur.curated_on,
+    cur.reason,
+    cur.notes,
+    cur.retired,
+    cur.curated_date,
+    cur.curated_time_utc,
+    cur.override_field,
+    cur.override_value,
+    cs.classif_type,
+
+    -- has this scv id been completely deleted from the most recent release?
+    (vs_last.deleted_release_date is not null AND vs_last.deleted_release_date <= cur.release_date) AS scv_deleted,
+    
+    -- if the scv id record is deleted then this is the first release it was no longer available in.
+    vs_last.deleted_release_date as scv_deleted_release_date,
+    
+    -- has this scv id been moved to another variation id in the most recent release?
+    (vs_last.variation_id <> cur.variation_id ) AS scv_moved,
+    
+    -- when was the most_recent submission version first released?
+    vs_last.start_release_date AS most_recent_scv_ver_released_on,
+    
+    -- what is the most_recent submission version for this scv id, null if deleted
+    vs_last.version AS most_recent_scv_ver,
+    
+    -- is this the curation the most recent for this scv id (TRUE or Count=0 means no newer curations currently exist for the exact scv id)
+    (COUNT(curated_on) OVER (PARTITION BY scv_id ORDER BY curated_on ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING) = 0) AS most_recent_curation,
+    
+    -- is this curation outdated for this scv id due to an update in the version number or moved to a different variation?
+    (vs_last.version > cur.scv_ver OR vs_last.variation_id <> cur.variation_id) AS outdated_curation,
+
+    vs_last.classif_type as most_recent_classification,
+
+    s.current_name as submitter_name,
+    s.current_abbrev as submitter_abbrev,
+    cs.rpt_stmt_type,
+    cs.rank,
+    cs.clinsig_type,
+    cur.retired_date
+
+  FROM cur
+  -- we could do an INNER JOIN but if there was an errant record in the curations 
+  -- sheet that didn't line up with a real scv then it would be inadvertantly hidden
+  -- So,it is possible (not probable) that the cs.* fields could all be null when returned.
+  -- same is true for the submitter fields
+  LEFT JOIN `clingen-stage.clinvar_curator.clinvar_scvs` cs
+  ON
+    cs.variation_id = cur.variation_id AND
+    cs.id = cur.scv_id AND
+    cs.version = cur.scv_ver
+  LEFT JOIN `clingen-stage.clinvar_curator.clinvar_submitters` s
+  ON
+    s.id = cur.submitter_id 
+  LEFT JOIN ( 
+    SELECT 
+      cs.id,
+      cs.version,      
+      cs.variation_id,
+      cs.start_release_date, 
+      cs.end_release_date,
+      cs.deleted_release_date,
+      cs.classif_type
+    FROM `clingen-stage.clinvar_curator.clinvar_scvs` cs
+    JOIN (
+      SELECT 
+        id,
+        MAX(end_release_date) as max_end_release_date
+      FROM cur
+      JOIN `clingen-stage.clinvar_curator.clinvar_scvs`
+      ON id = cur.scv_id
+      GROUP BY id
+    ) cs2 on cs2.id = cs.id AND cs2.max_end_release_date = cs.end_release_date
+  ) vs_last
+  ON
+    vs_last.id = cur.scv_id

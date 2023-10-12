@@ -1,0 +1,24 @@
+CREATE OR REPLACE TABLE FUNCTION `clingen-stage.clinvar_curator.variant_conflicts_as_of`(as_of_date DATE)
+AS (
+
+  select 
+    rel.release_date,
+    variation_id,
+    rpt_stmt_type,
+    rank,
+    SUM(DISTINCT IF(cs.clinsig_type=2,4,IF(cs.clinsig_type=1,2,1))) as agg_sig_type
+  from `clingen-stage.clinvar_curator.release_date_as_of`(as_of_date) rel
+  join `clingen-stage.clinvar_curator.clinvar_scvs` cs
+  on
+    rel.release_date between start_release_date AND end_release_date 
+    -- REMOVE deleted_release_date is null check on 7/13/2023 after discovering it was wrong
+    -- AND (deleted_release_date is null) 
+  group by 
+    rel.release_date,
+    variation_id,
+    rpt_stmt_type,
+    rank
+  having count(distinct cs.clinsig_type) > 1
+);
+
+-- select * from `clingen-stage.clinvar_curator.variant_conflicts_as_of`(DATE('2023-10-12'));

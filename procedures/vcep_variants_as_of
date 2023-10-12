@@ -1,0 +1,19 @@
+CREATE OR REPLACE TABLE FUNCTION `clingen-stage.clinvar_curator.vcep_variants_as_of`(as_of_date DATE)
+AS (
+  select 
+    rel.release_date,
+    cs.variation_id
+  from `clingen-stage.clinvar_curator.release_date_as_of`(as_of_date) rel
+  join `clingen-stage.clinvar_curator.report_submitter` rs 
+  on
+    rs.type = "VCEP"
+  join `clingen-stage.clinvar_curator.clinvar_scvs` cs
+  on
+    cs.submitter_id = rs.submitter_id AND 
+    rel.release_date between start_release_date AND end_release_date 
+  group by 
+    rel.release_date,
+    cs.variation_id
+);
+
+-- select * from `clingen-stage.clinvar_curator.vcep_variants_as_of`(DATE('2023-10-12'));

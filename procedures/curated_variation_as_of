@@ -1,0 +1,23 @@
+CREATE OR REPLACE TABLE FUNCTION `clingen-stage.clinvar_curator.curated_variation_as_of`(as_of_date DATE) 
+AS
+(
+  select 
+    cvc.variation_id,
+    cvc.rpt_stmt_type,
+    cvc.rank,
+    countif(cvc.action='non-contributory') as noncontrib_cnt,
+    countif(action = "no change") as nochange_cnt
+  from clinvar_curator.cvc_curations_as_of(as_of_date) cvc
+  where 
+    cvc.most_recent_curation AND
+    NOT cvc.retired AND
+    NOT cvc.scv_deleted
+  group by 
+    cvc.variation_id,
+    cvc.rpt_stmt_type,
+    cvc.rank
+);
+
+
+-- select *
+-- from `clingen-stage.clinvar_curator.curated_variation_as_of`(DATE('2023-10-01')) ;

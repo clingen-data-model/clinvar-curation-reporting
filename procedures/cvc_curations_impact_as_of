@@ -1,0 +1,142 @@
+CREATE OR REPLACE TABLE FUNCTION `clingen-stage.clinvar_curator.cvc_curations_impact_as_of`(as_of_date DATE)
+AS (
+  WITH x AS 
+  (
+    SELECT 
+      vs.variation_id, 
+      vsc.start_release_date,
+      vsc.end_release_date,
+      vs.rpt_stmt_type, 
+      vs.rank,
+      vs.classif_type,
+      vs.clinsig_type,
+      cvc.release_date,
+      IF(count(DISTINCT IF(cvc2.variation_id is null, vs.id, null)) > 0, vs.classif_type, null) as cvc_classif_type,
+      IF(count(DISTINCT IF(cvc2.variation_id is null, vs.id, null)) > 0, (vs.classif_type||'('||(count(DISTINCT IF(cvc2.variation_id is null, vs.id, null)))||')'), null) AS cvc_classif_type_w_count
+    FROM `clingen-stage.clinvar_curator.cvc_curations_as_of`(as_of_date) cvc
+    JOIN `clingen-stage.clinvar_curator.clinvar_var_scv_change` vsc
+    ON
+      cvc.variation_id = vsc.variation_id AND
+      cvc.release_date between vsc.start_release_date AND vsc.end_release_date
+    JOIN `clingen-stage.clinvar_curator.clinvar_scvs` vs
+    ON
+      cvc.variation_id = vs.variation_id AND 
+      cvc.rpt_stmt_type = vs.rpt_stmt_type AND
+      cvc.rank = vs.rank AND
+      cvc.release_date between vs.start_release_date AND vs.end_release_date
+    LEFT JOIN `clingen-stage.clinvar_curator.cvc_curations_as_of`(as_of_date) cvc2
+    ON 
+      vs.id = cvc2.scv_id AND
+      vs.version = cvc2.scv_ver AND
+      vs.rpt_stmt_type = cvc2.rpt_stmt_type AND
+      vs.rank = cvc2.rank AND
+      cvc2.action = 'non-contributory' AND
+      NOT cvc2.retired AND
+      cvc2.most_recent_curation AND
+      NOT cvc2.scv_deleted
+    WHERE 
+      cvc.action = 'non-contributory' AND
+      NOT cvc.retired AND
+      cvc.most_recent_curation AND 
+      NOT cvc.scv_deleted
+    GROUP BY
+      vs.variation_id, 
+      vsc.start_release_date,
+      vsc.end_release_date,
+      vs.rpt_stmt_type, 
+      vs.rank,
+      vs.classif_type,
+      vs.clinsig_type,
+      cvc.release_date
+  )
+  select 
+    x.start_release_date,
+    x.end_release_date,
+    x.variation_id,
+    x.rpt_stmt_type, 
+    x.rank,      
+    x.release_date,
+    COUNT(DISTINCT IF(cvc.variation_id is null,vs.clinsig_type,null)) as cvc_unique_clinsig_type_count,
+    SUM(DISTINCT IF(cvc.variation_id is null,IF(vs.clinsig_type=2,4,IF(vs.clinsig_type=1,2,1)),null)) as agg_cvc_sig_type,
+    `clingen-stage.clinvar_curator.createSigType`(
+      COUNT(DISTINCT IF(cvc.variation_id is null and vs.clinsig_type = 0, vs.submitter_id, NULL)),
+      COUNT(DISTINCT IF(cvc.variation_id is null and vs.clinsig_type = 1, vs.submitter_id, NULL)),
+      COUNT(DISTINCT IF(cvc.variation_id is null and vs.clinsig_type = 2, vs.submitter_id, NULL))
+    ) as cvc_sig_type,
+    count(DISTINCT IF(cvc.variation_id is null, vs.id, null)) as cvc_submission_count,
+    count(DISTINCT if(cvc.variation_id is null,vs.submitter_id,null)) as cvc_submitter_count,
+    count(DISTINCT IF(cvc.variation_id is not null, vs.id, null)) as cvc_nc_submission_count,
+    count(DISTINCT if(cvc.variation_id is not null, vs.submitter_id, null)) as cvc_nc_submitter_count,
+    string_agg(distinct x.cvc_classif_type, '/' order by x.cvc_classif_type) AS agg_cvc_classif,
+    string_agg(distinct x.cvc_classif_type_w_count, '/' order by x.cvc_classif_type_w_count) AS agg_cvc_classif_w_count
+  from x
+  JOIN `clingen-stage.clinvar_curator.clinvar_scvs` vs
+  ON
+    vs.variation_id = x.variation_id AND
+    vs.rpt_stmt_type = x.rpt_stmt_type AND
+    vs.rank = x.rank AND
+    x.release_date BETWEEN vs.start_release_date AND vs.end_release_date
+  
+  LEFT JOIN `clingen-stage.clinvar_curator.cvc_curations_as_of`(as_of_date) cvc
+  ON
+    cvc.variation_id = x.variation_id AND
+    cvc.scv_id = vs.id AND 
+    NOT cvc.retired  AND
+    cvc.most_recent_curation AND
+    NOT cvc.scv_deleted AND
+    cvc.action = "non-contributory" 
+  group by
+    x.variation_id, 
+    x.start_release_date,
+    x.end_release_date,
+    x.rpt_stmt_type, 
+    x.rank,
+    x.release_date
+);
+
+-- select * 
+-- from `clingen-stage.clinvar_curator.cvc_curations_impact_as_of`(DATE('2023-03-26'))
+-- where variation_id = "164023";
+
+-- -- find intersection between voi and voi_scv windows for the same variant to create the voi_group records
+-- -- date window intersection is found by using the condition ((start_window1 <= end_window2) AND (end_window1 >= start_window2))
+-- -- the start and end dates are always inclusive, meaning the start date is the date that the record is first available and
+-- -- the end date is the date that the record is last available.
+-- -- https://stackoverflow.com/questions/325933/determine-whether-two-date-ranges-overlap
+-- -- (s1 <= eX) AND (e1 >= sX)
+
+-- -- A        s1--------------e1
+-- --  |----|----|----|----|----|----|----|
+-- -- B           s2------e2                  s1 <= e2 AND e1 >= s2.   TRUE
+-- -- C s3------------------------e3          s1 <= e3 AND e1 >= s3.   TRUE
+-- -- D   s4------e4                          s1 <= e4 AND e1 >= s4.   TRUE
+-- -- E               s5----------e5          s1 <= e5 AND e1 >= s5.   TRUE
+-- -- F s6--e6                                s1 <= e6 AND e1 >= s6.   FALSE
+-- -- G.                          s7--e7      s1 <= e7 AND e1 >= s7.   FALSE
+
+
+-- -- agg_sig_type sig|unc|nosig as 2|1|0 so
+-- ---  7 = 111  or yes to all 3. (sig conflict)
+-- ---  6 = 110  or yes to sig and unc only (sig conflict)
+-- ---  5 = 101  or yes to sig and nosig only (sig conflict)
+-- ---  4 = 100  or yes to sig only. (no conflict - sig)
+-- ---  3 = 011  or yes to unc and no sig (nosig conflict*)
+-- ---  2 = 010. or yes to unc only (no conflict - nosig)
+-- ---  1 = 001. or yes to nosig only (no conflict - nosig)
+
+-- -- ONLY needed if function does not already exists or needs updating. This is used by several scripts.
+-- -- CREATE FUNCTION `clingen-stage.clinvar_curator.createSigType`(nosig_count INTEGER, unc_count INTEGER, sig_count INTEGER)
+-- -- RETURNS ARRAY<STRUCT<count INTEGER, percent NUMERIC>>
+-- -- AS (
+-- --   IF(
+-- --     (nosig_count + unc_count + sig_count ) = 0,
+-- --     ARRAY[STRUCT<count INTEGER, percent NUMERIC>(0,0),STRUCT<count INTEGER, percent NUMERIC>(0,0),STRUCT<count INTEGER, percent NUMERIC>(0,0)],
+-- --     -- order is significant, OFFSET 0=no-sig, 1=uncertain, 2=sig
+-- --     ARRAY[ 
+-- --       STRUCT<count INTEGER, percent NUMERIC>( nosig_count, CAST(ROUND(nosig_count/(sig_count + unc_count + nosig_count ),3) as NUMERIC)),
+-- --       STRUCT<count INTEGER, percent NUMERIC>( unc_count, CAST(ROUND(unc_count/(sig_count + unc_count + nosig_count ),3) as NUMERIC)),
+-- --       STRUCT<count INTEGER, percent NUMERIC>( sig_count, CAST(ROUND(sig_count/(sig_count + unc_count + nosig_count ),3) as NUMERIC))
+-- --       ]
+-- --   )
+-- -- );
+
