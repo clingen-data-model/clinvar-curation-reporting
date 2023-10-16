@@ -19,7 +19,8 @@ AS (
       cur.override_field,
       cur.override_value, 
       rel.release_date,
-      cur.retired_date
+      cur.retired_date,
+      UNIX_MILLIS(curation_date) as millis_id
     FROM `clingen-stage.clinvar_curator.clinvar_curations` cur,
       `clingen-stage.clinvar_curator.release_date_as_of`(as_of_date) rel
     WHERE 
@@ -73,7 +74,8 @@ AS (
     cs.rpt_stmt_type,
     cs.rank,
     cs.clinsig_type,
-    cur.retired_date
+    cur.retired_date,
+    cur.millis_id
 
   FROM cur
   -- we could do an INNER JOIN but if there was an errant record in the curations 
